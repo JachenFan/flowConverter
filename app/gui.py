@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QDoubleValidator
 
-from .converter import FlowConverter, volumetric_to_molar, molar_to_volumetric, molar_to_mass, mass_to_molar
+from .converter import FlowConverter, volumetric_to_molar, molar_to_volumetric, molar_to_mass, mass_to_molar, R, STD_T_K, STD_P_PA
 from .units import (
     VOLUMETRIC_UNITS, MASS_UNITS, MOLAR_UNITS, STD_VOL_UNITS,
     VOLUMETRIC_LABELS, MASS_LABELS, MOLAR_LABELS,
@@ -301,6 +301,10 @@ class FlowFromRatioPanel(QGroupBox):
         btn_layout = QHBoxLayout()
         btn_layout.addWidget(self._swap_btn)
         btn_layout.addStretch()
+        self._detail_btn = QPushButton('\U0001F4CB \u67e5\u770b\u8ba1\u7b97\u6b65\u9aa4')
+        self._detail_btn.setFixedHeight(28)
+        self._detail_btn.clicked.connect(self._show_detail)
+        btn_layout.addWidget(self._detail_btn)
         layout.addLayout(btn_layout, 4, 0, 1, 9)
 
         self._gas_a_combo.currentIndexChanged.connect(self._on_any_change)
@@ -411,6 +415,10 @@ class FlowFromRatioPanel(QGroupBox):
 
     def set_value_b(self, val: float):
         self._value_b_input.set_value(val)
+
+    def _show_detail(self):
+        dlg = FlowFromRatioStepsDialog(self, self.window())
+        dlg.exec()
 
     def _on_any_change(self):
         if self._updating:
@@ -611,6 +619,10 @@ class RatioCalcPanel(QGroupBox):
         btn_layout = QHBoxLayout()
         btn_layout.addWidget(self._swap_btn)
         btn_layout.addStretch()
+        self._detail_btn = QPushButton('\U0001F4CB \u67e5\u770b\u8ba1\u7b97\u6b65\u9aa4')
+        self._detail_btn.setFixedHeight(28)
+        self._detail_btn.clicked.connect(self._show_detail)
+        btn_layout.addWidget(self._detail_btn)
         layout.addLayout(btn_layout, 5, 0, 1, 9)
 
         self._gas_a_combo.currentIndexChanged.connect(self._on_any_change)
@@ -689,6 +701,10 @@ class RatioCalcPanel(QGroupBox):
 
     def get_value_b(self) -> Optional[float]:
         return _parse(self._value_b_input.text())
+
+    def _show_detail(self):
+        dlg = RatioCalcStepsDialog(self, self.window())
+        dlg.exec()
 
     def _on_any_change(self):
         if self._updating:
@@ -830,6 +846,14 @@ def _press_pa(spin: QDoubleSpinBox, combo: QComboBox) -> float:
     return spin.value() * PRESSURE_UNITS[combo.currentData()]
 
 
+def _gas_name(gas_key: str) -> str:
+    app = QApplication.instance()
+    db = app.property('gas_db')
+    if db is None:
+        return gas_key
+    return db.display_name(gas_key) if hasattr(db, 'display_name') else gas_key
+
+
 def _get_mm(gas_key: str) -> float:
     app = QApplication.instance()
     db = app.property('gas_db')
@@ -926,7 +950,7 @@ class CalcStepsDialog(QDialog):
             if utype == 'volumetric':
                 is_std = src_unit in STD_VOL_UNITS
                 if is_std:
-                    t_used, p_used = 273.15, 101325.0
+                    t_used, p_used = STD_T_K, STD_P_PA
                     lines.append(f'<div class="note">{_unit_label(src_unit)} \u662f\u6807\u51c6\u4f53\u79ef\u6d41\u91cf\uff0c\u59cb\u7ec8\u4f7f\u7528 STP (0\u00b0C, 1 atm)</div>')
                 else:
                     t_used, p_used = temp_K, press_Pa
@@ -968,6 +992,192 @@ class CalcStepsDialog(QDialog):
             val = cvt.get_molar(k)
             lines.append(f'<tr><td>{label}</td><td>{_fmt(val)}</td></tr>')
         lines.append('</table>')
+
+        return '\n'.join(lines)
+
+
+class RatioCalcStepsDialog(QDialog):
+    STYLE = CalcStepsDialog.STYLE
+
+    def __init__(self, panel, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('\u6d41\u91cf\u6bd4\u4f8b\u8ba1\u7b97\u8be6\u60c5')
+        self.setMinimumSize(560, 480)
+        self.resize(620, 560)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 8)
+
+        browser = QTextBrowser()
+        browser.setOpenExternalLinks(False)
+        browser.setHtml(self.STYLE + self._build_html(panel))
+        layout.addWidget(browser)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        cb = QPushButton('\u5173\u95ed')
+        cb.clicked.connect(self.accept)
+        btn_row.addWidget(cb)
+        btn_row.setContentsMargins(12, 4, 12, 0)
+        layout.addLayout(btn_row)
+
+    @staticmethod
+    def _build_html(p) -> str:
+        lines = []
+
+        va = p.get_value_a()
+        vb = p.get_value_b()
+        if va is None or vb is None:
+            return '<h2>\u6d41\u91cf\u6bd4\u4f8b\u8ba1\u7b97\u8be6\u60c5</h2><p>\u8bf7\u5148\u8f93\u5165\u4e24\u79cd\u6c14\u4f53\u7684\u6d41\u91cf\u503c\u3002</p>'
+
+        ga_key = p.get_gas_a_key()
+        gb_key = p.get_gas_b_key()
+        ua_key = p.get_unit_a_key()
+        ub_key = p.get_unit_b_key()
+        mm_a = _get_mm(ga_key)
+        mm_b = _get_mm(gb_key)
+        t_aK = p._temp_a_spin.value() + 273.15
+        p_aPa = _press_pa(p._press_a_spin, p._press_a_combo)
+        t_bK = p._temp_b_spin.value() + 273.15
+        p_bPa = _press_pa(p._press_b_spin, p._press_b_combo)
+
+        mol_a = _to_molar(va, ua_key, mm_a, t_aK, p_aPa)
+        mol_b = _to_molar(vb, ub_key, mm_b, t_bK, p_bPa)
+        mass_a = molar_to_mass(mol_a, mm_a)
+        mass_b = molar_to_mass(mol_b, mm_b)
+        vol_a = molar_to_volumetric(mol_a, t_aK, p_aPa, False)
+        vol_b = molar_to_volumetric(mol_b, t_bK, p_bPa, False)
+
+        molar_r = mol_b / mol_a
+        mass_r = mass_b / mass_a
+        vol_r = vol_b / vol_a
+
+        lines.append('<h2>\u6d41\u91cf\u6bd4\u4f8b\u8ba1\u7b97\u8be6\u60c5</h2>')
+
+        lines.append('<h3>\u8f93\u5165\u53c2\u6570</h3>')
+        lines.append('<table>')
+        lines.append(f'<tr><td>\u6c14\u4f53A</td><td>{_gas_name(ga_key)}</td><td>{_fmt(va)} {_unit_label(ua_key)}</td></tr>')
+        lines.append(f'<tr><td>\u6c14\u4f53B</td><td>{_gas_name(gb_key)}</td><td>{_fmt(vb)} {_unit_label(ub_key)}</td></tr>')
+        lines.append(f'<tr><td>A \u6e29\u5ea6</td><td colspan="2">{p._temp_a_spin.value():.1f} \u00b0C ({t_aK:.2f} K)</td></tr>')
+        lines.append(f'<tr><td>A \u538b\u529b</td><td colspan="2">{_fmt(p_aPa)} Pa</td></tr>')
+        lines.append(f'<tr><td>B \u6e29\u5ea6</td><td colspan="2">{p._temp_b_spin.value():.1f} \u00b0C ({t_bK:.2f} K)</td></tr>')
+        lines.append(f'<tr><td>B \u538b\u529b</td><td colspan="2">{_fmt(p_bPa)} Pa</td></tr>')
+        lines.append(f'<tr><td>A \u6469\u5c14\u8d28\u91cf</td><td colspan="2">{mm_a} g/mol</td></tr>')
+        lines.append(f'<tr><td>B \u6469\u5c14\u8d28\u91cf</td><td colspan="2">{mm_b} g/mol</td></tr>')
+        lines.append('</table>')
+
+        lines.append('<h3>\u6b65\u9aa41: \u6c14\u4f53A \u2192 \u6469\u5c14\u6d41\u91cf</h3>')
+        lines.append(f'<div class="formula">{_fmt(mol_a)} mol/s</div>')
+
+        lines.append('<h3>\u6b65\u9aa42: \u6c14\u4f53B \u2192 \u6469\u5c14\u6d41\u91cf</h3>')
+        lines.append(f'<div class="formula">{_fmt(mol_b)} mol/s</div>')
+
+        lines.append('<h3>\u6b65\u9aa43: \u8ba1\u7b97\u5404\u7c7b\u6bd4\u503c (A = 1)</h3>')
+        lines.append(f'<div class="formula"><b>\u6469\u5c14\u6bd4</b>  1 : {molar_r:.4f}</div>')
+        lines.append(f'<div class="formula"><b>\u8d28\u91cf\u6bd4</b>  1 : {mass_r:.4f}</div>')
+        lines.append(f'<div class="formula"><b>\u4f53\u79ef\u6bd4</b>  1 : {vol_r:.4f}</div>')
+
+        lines.append('<div class="note">\u6469\u5c14\u6bd4 = n<sub>B</sub> / n<sub>A</sub><br>'
+                     '\u8d28\u91cf\u6bd4 = m<sub>B</sub> / m<sub>A</sub><br>'
+                     '\u4f53\u79ef\u6bd4 = V<sub>B</sub> / V<sub>A</sub> (\u5b9e\u9645\u4f53\u79ef)</div>')
+
+        return '\n'.join(lines)
+
+
+class FlowFromRatioStepsDialog(QDialog):
+    STYLE = CalcStepsDialog.STYLE
+
+    def __init__(self, panel, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('\u5df2\u77e5\u6d41\u91cf\u4e0e\u6bd4\u4f8b\u8ba1\u7b97\u8be6\u60c5')
+        self.setMinimumSize(560, 500)
+        self.resize(620, 560)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 8)
+
+        browser = QTextBrowser()
+        browser.setOpenExternalLinks(False)
+        browser.setHtml(self.STYLE + self._build_html(panel))
+        layout.addWidget(browser)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        cb = QPushButton('\u5173\u95ed')
+        cb.clicked.connect(self.accept)
+        btn_row.addWidget(cb)
+        btn_row.setContentsMargins(12, 4, 12, 0)
+        layout.addLayout(btn_row)
+
+    @staticmethod
+    def _build_html(p) -> str:
+        lines = []
+
+        mode_names = ['\u6469\u5c14\u6bd4', '\u8d28\u91cf\u6bd4', '\u4f53\u79ef\u6bd4']
+        mode = mode_names[p._mode_group.checkedId()]
+
+        va = p.get_value_a()
+        if va is None:
+            return '<h2>\u5df2\u77e5\u6d41\u91cf\u4e0e\u6bd4\u4f8b\u8ba1\u7b97\u8be6\u60c5</h2><p>\u8bf7\u5148\u8f93\u5165\u6c14\u4f53A\u7684\u6d41\u91cf\u503c\u3002</p>'
+
+        ga_key = p.get_gas_a_key()
+        gb_key = p.get_gas_b_key()
+        ua_key = p.get_unit_a_key()
+        ub_key = p.get_unit_b_key()
+        mm_a = _get_mm(ga_key)
+        mm_b = _get_mm(gb_key)
+        t_aK = p._temp_a_spin.value() + 273.15
+        p_aPa = _press_pa(p._press_a_spin, p._press_a_combo)
+        t_bK = p._temp_b_spin.value() + 273.15
+        p_bPa = _press_pa(p._press_b_spin, p._press_b_combo)
+        ratio_a = p.get_ratio_a()
+        ratio_b = p.get_ratio_b()
+
+        lines.append('<h2>\u5df2\u77e5\u6d41\u91cf\u4e0e\u6bd4\u4f8b\u8ba1\u7b97\u8be6\u60c5</h2>')
+
+        lines.append('<h3>\u8f93\u5165\u53c2\u6570</h3>')
+        lines.append('<table>')
+        lines.append(f'<tr><td>\u6a21\u5f0f</td><td>{mode}</td></tr>')
+        lines.append(f'<tr><td>\u6c14\u4f53A</td><td>{_gas_name(ga_key)}</td><td>{_fmt(va)} {_unit_label(ua_key)}</td></tr>')
+        lines.append(f'<tr><td>\u6c14\u4f53B</td><td>{_gas_name(gb_key)}</td><td>{_unit_label(ub_key)}</td></tr>')
+        lines.append(f'<tr><td>A \u6e29\u5ea6</td><td colspan="2">{p._temp_a_spin.value():.1f} \u00b0C ({t_aK:.2f} K)</td></tr>')
+        lines.append(f'<tr><td>A \u538b\u529b</td><td colspan="2">{_fmt(p_aPa)} Pa</td></tr>')
+        lines.append(f'<tr><td>B \u6e29\u5ea6</td><td colspan="2">{p._temp_b_spin.value():.1f} \u00b0C ({t_bK:.2f} K)</td></tr>')
+        lines.append(f'<tr><td>B \u538b\u529b</td><td colspan="2">{_fmt(p_bPa)} Pa</td></tr>')
+        lines.append(f'<tr><td>\u6bd4\u4f8b A:B</td><td colspan="2">{_fmt(ratio_a)} : {_fmt(ratio_b)}</td></tr>')
+        lines.append(f'<tr><td>A \u6469\u5c14\u8d28\u91cf</td><td colspan="2">{mm_a} g/mol</td></tr>')
+        lines.append(f'<tr><td>B \u6469\u5c14\u8d28\u91cf</td><td colspan="2">{mm_b} g/mol</td></tr>')
+        lines.append('</table>')
+
+        lines.append('<h3>\u6b65\u9aa41: \u6c14\u4f53A \u2192 \u76ee\u6807\u91cf</h3>')
+        mol_a = _to_molar(va, ua_key, mm_a, t_aK, p_aPa)
+        if p._mode_group.checkedId() == 0:
+            target_a = mol_a
+            target_unit = 'mol/s'
+            lines.append(f'<div class="formula">\u8f6c\u6362\u4e3a\u6469\u5c14\u6d41\u91cf: {_fmt(mol_a)} mol/s</div>')
+        elif p._mode_group.checkedId() == 1:
+            target_a = molar_to_mass(mol_a, mm_a)
+            target_unit = 'kg/s'
+            lines.append(f'<div class="formula">\u8f6c\u6362\u4e3a\u8d28\u91cf\u6d41\u91cf: {_fmt(target_a)} kg/s</div>')
+        else:
+            target_a = molar_to_volumetric(mol_a, t_aK, p_aPa, False)
+            target_unit = 'm\u00b3/s'
+            lines.append(f'<div class="formula">\u8f6c\u6362\u4e3a\u5b9e\u9645\u4f53\u79ef\u6d41\u91cf: {_fmt(target_a)} m\u00b3/s</div>')
+
+        lines.append(f'<h3>\u6b65\u9aa42: \u6309\u6bd4\u4f8b\u8ba1\u7b97\u6c14\u4f53B\u76ee\u6807\u91cf</h3>')
+        target_b = target_a * ratio_b / ratio_a
+        lines.append(f'<div class="formula">B = A \u00d7 ({_fmt(ratio_b)} / {_fmt(ratio_a)}) = {_fmt(target_b)} {target_unit}</div>')
+
+        lines.append('<h3>\u6b65\u9aa43: \u6c14\u4f53B \u76ee\u6807\u91cf \u2192 \u663e\u793a\u5355\u4f4d</h3>')
+        if p._mode_group.checkedId() == 0:
+            mol_b = target_b
+        elif p._mode_group.checkedId() == 1:
+            mol_b = mass_to_molar(target_b, mm_b)
+        else:
+            mol_b = volumetric_to_molar(target_b, t_bK, p_bPa, False)
+
+        vb_result = _from_molar(mol_b, ub_key, mm_b, t_bK, p_bPa)
+        lines.append(f'<div class="formula"><span class="result">{_fmt(vb_result)} {_unit_label(ub_key)}</span></div>')
 
         return '\n'.join(lines)
 
