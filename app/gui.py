@@ -1062,24 +1062,68 @@ class RatioCalcStepsDialog(QDialog):
         lines.append(f'<tr><td>A \u538b\u529b</td><td colspan="2">{_fmt(p_aPa)} Pa</td></tr>')
         lines.append(f'<tr><td>B \u6e29\u5ea6</td><td colspan="2">{p._temp_b_spin.value():.1f} \u00b0C ({t_bK:.2f} K)</td></tr>')
         lines.append(f'<tr><td>B \u538b\u529b</td><td colspan="2">{_fmt(p_bPa)} Pa</td></tr>')
-        lines.append(f'<tr><td>A \u6469\u5c14\u8d28\u91cf</td><td colspan="2">{mm_a} g/mol</td></tr>')
-        lines.append(f'<tr><td>B \u6469\u5c14\u8d28\u91cf</td><td colspan="2">{mm_b} g/mol</td></tr>')
+        lines.append(f'<tr><td>A \u6469\u5c14\u8d28\u91cf M<sub>A</sub></td><td colspan="2">{mm_a} g/mol</td></tr>')
+        lines.append(f'<tr><td>B \u6469\u5c14\u8d28\u91cf M<sub>B</sub></td><td colspan="2">{mm_b} g/mol</td></tr>')
         lines.append('</table>')
 
-        lines.append('<h3>\u6b65\u9aa41: \u6c14\u4f53A \u2192 \u6469\u5c14\u6d41\u91cf</h3>')
-        lines.append(f'<div class="formula">{_fmt(mol_a)} mol/s</div>')
+        def _append_gas_steps(label, val, unit_key, mm, tK, pPa, mol, mass, vol):
+            lines.append(f'<h3>{label}</h3>')
+            utype = get_unit_type(unit_key)
+            base = to_base(val, unit_key, utype)
+            base_unit = {'volumetric': 'm\u00b3/s', 'mass': 'kg/s', 'molar': 'mol/s'}[utype]
+            factor = val / base if base != 0 else 1
+            lines.append(f'<p><b>\u2460 \u8f6c\u6362\u4e3a\u57fa\u51c6\u5355\u4f4d</b></p>')
+            lines.append(f'<div class="formula">{_fmt(val)} {_unit_label(unit_key)} \u00f7 {_fmt(factor)} = {_fmt(base)} {base_unit}</div>')
+            lines.append(f'<p><b>\u2461 \u8f6c\u6362\u4e3a\u6469\u5c14\u6d41\u91cf</b></p>')
+            if utype == 'volumetric':
+                is_std = unit_key in STD_VOL_UNITS
+                if is_std:
+                    lines.append(f'<div class="note">{_unit_label(unit_key)} \u662f\u6807\u51c6\u4f53\u79ef\u6d41\u91cf\uff0c\u4f7f\u7528 STP (T\u2080={STD_T_K}K, P\u2080={_fmt(STD_P_PA)}Pa)</div>')
+                    tU, pU = STD_T_K, STD_P_PA
+                else:
+                    lines.append(f'<div class="note">{_unit_label(unit_key)} \u662f\u5b9e\u9645\u4f53\u79ef\u6d41\u91cf\uff0c\u4f7f\u7528\u5de5\u827a\u6e29\u538b</div>')
+                    tU, pU = tK, pPa
+                lines.append(f'<div class="formula">n = P\u00b7V / (R\u00b7T)</div>')
+                lines.append(f'<div class="formula">= {_fmt(pU)} \u00d7 {_fmt(base)} / ({_fmt(R, 10)} \u00d7 {_fmt(tU)})</div>')
+                lines.append(f'<div class="formula">= <span class="result">{_fmt(mol)} mol/s</span></div>')
+            elif utype == 'mass':
+                lines.append(f'<div class="formula">n = m / M</div>')
+                lines.append(f'<div class="formula">= {_fmt(base)} / ({_fmt(mm / 1000.0)})</div>')
+                lines.append(f'<div class="formula">= <span class="result">{_fmt(mol)} mol/s</span></div>')
+            else:
+                lines.append(f'<div class="formula">\u76f4\u63a5\u8f93\u5165\u6469\u5c14\u6d41\u91cf: {_fmt(mol)} mol/s</div>')
+            lines.append(f'<p><b>\u2462 \u8d28\u91cf\u6d41\u91cf</b></p>')
+            lines.append(f'<div class="formula">m = n \u00d7 M = {_fmt(mol)} \u00d7 {_fmt(mm / 1000.0)} = {_fmt(mass)} kg/s</div>')
+            lines.append(f'<p><b>\u2463 \u5b9e\u9645\u4f53\u79ef\u6d41\u91cf</b></p>')
+            lines.append(f'<div class="formula">V = n\u00b7R\u00b7T / P</div>')
+            lines.append(f'<div class="formula">= {_fmt(mol)} \u00d7 {_fmt(R, 10)} \u00d7 {_fmt(tK)} / {_fmt(pPa)}</div>')
+            lines.append(f'<div class="formula">= <span class="result">{_fmt(vol)} m\u00b3/s</span></div>')
 
-        lines.append('<h3>\u6b65\u9aa42: \u6c14\u4f53B \u2192 \u6469\u5c14\u6d41\u91cf</h3>')
-        lines.append(f'<div class="formula">{_fmt(mol_b)} mol/s</div>')
+        _append_gas_steps('\u6b65\u9aa41: \u6c14\u4f53A', va, ua_key, mm_a, t_aK, p_aPa, mol_a, mass_a, vol_a)
+        _append_gas_steps('\u6b65\u9aa42: \u6c14\u4f53B', vb, ub_key, mm_b, t_bK, p_bPa, mol_b, mass_b, vol_b)
 
         lines.append('<h3>\u6b65\u9aa43: \u8ba1\u7b97\u5404\u7c7b\u6bd4\u503c (A = 1)</h3>')
-        lines.append(f'<div class="formula"><b>\u6469\u5c14\u6bd4</b>  1 : {molar_r:.4f}</div>')
-        lines.append(f'<div class="formula"><b>\u8d28\u91cf\u6bd4</b>  1 : {mass_r:.4f}</div>')
-        lines.append(f'<div class="formula"><b>\u4f53\u79ef\u6bd4</b>  1 : {vol_r:.4f}</div>')
 
-        lines.append('<div class="note">\u6469\u5c14\u6bd4 = n<sub>B</sub> / n<sub>A</sub><br>'
-                     '\u8d28\u91cf\u6bd4 = m<sub>B</sub> / m<sub>A</sub><br>'
-                     '\u4f53\u79ef\u6bd4 = V<sub>B</sub> / V<sub>A</sub> (\u5b9e\u9645\u4f53\u79ef)</div>')
+        lines.append(f'<p><b>\u2460 \u6469\u5c14\u6bd4 (Molar Ratio)</b></p>')
+        lines.append(f'<div class="formula">\u6469\u5c14\u6bd4 = n<sub>B</sub> / n<sub>A</sub></div>')
+        lines.append(f'<div class="formula">= {_fmt(mol_b)} / {_fmt(mol_a)}</div>')
+        lines.append(f'<div class="formula">= <span class="result">{molar_r:.4f}</span></div>')
+        lines.append(f'<div style="text-align:center;font-size:15px;margin:6px 0;"><b>A : B = 1 : {molar_r:.4f}</b></div>')
+
+        lines.append(f'<p><b>\u2461 \u8d28\u91cf\u6bd4 (Mass Ratio)</b></p>')
+        lines.append(f'<div class="formula">\u8d28\u91cf\u6bd4 = m<sub>B</sub> / m<sub>A</sub> = (n<sub>B</sub> \u00d7 M<sub>B</sub>) / (n<sub>A</sub> \u00d7 M<sub>A</sub>)</div>')
+        lines.append(f'<div class="formula">= ({_fmt(mol_b)} \u00d7 {_fmt(mm_b / 1000.0)}) / ({_fmt(mol_a)} \u00d7 {_fmt(mm_a / 1000.0)})</div>')
+        lines.append(f'<div class="formula">= {_fmt(mass_b)} / {_fmt(mass_a)}</div>')
+        lines.append(f'<div class="formula">= <span class="result">{mass_r:.4f}</span></div>')
+        lines.append(f'<div style="text-align:center;font-size:15px;margin:6px 0;"><b>A : B = 1 : {mass_r:.4f}</b></div>')
+
+        lines.append(f'<p><b>\u2462 \u4f53\u79ef\u6bd4 (Volumetric Ratio)</b></p>')
+        lines.append(f'<div class="formula">\u4f53\u79ef\u6bd4 = V<sub>B</sub> / V<sub>A</sub></div>')
+        lines.append(f'<div class="formula">= (n<sub>B</sub>\u00b7R\u00b7T<sub>B</sub>/P<sub>B</sub>) / (n<sub>A</sub>\u00b7R\u00b7T<sub>A</sub>/P<sub>A</sub>)</div>')
+        lines.append(f'<div class="formula">= ({_fmt(mol_b)} \u00d7 {_fmt(R, 10)} \u00d7 {_fmt(t_bK)} / {_fmt(p_bPa)}) / ({_fmt(mol_a)} \u00d7 {_fmt(R, 10)} \u00d7 {_fmt(t_aK)} / {_fmt(p_aPa)})</div>')
+        lines.append(f'<div class="formula">= {_fmt(vol_b)} / {_fmt(vol_a)}</div>')
+        lines.append(f'<div class="formula">= <span class="result">{vol_r:.4f}</span></div>')
+        lines.append(f'<div style="text-align:center;font-size:15px;margin:6px 0;"><b>A : B = 1 : {vol_r:.4f}</b></div>')
 
         return '\n'.join(lines)
 
