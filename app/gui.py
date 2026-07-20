@@ -16,6 +16,7 @@ from .converter import FlowConverter, volumetric_to_molar, molar_to_volumetric, 
 from .units import (
     VOLUMETRIC_UNITS, MASS_UNITS, MOLAR_UNITS, STD_VOL_UNITS,
     VOLUMETRIC_LABELS, MASS_LABELS, MOLAR_LABELS,
+    PRESSURE_UNITS, PRESSURE_LABELS,
     get_unit_type, to_base, from_base,
 )
 
@@ -148,13 +149,19 @@ class ConditionPanel(QGroupBox):
 
         layout.addWidget(QLabel('\u538b\u529b:'))
         self._press_spin = QDoubleSpinBox()
-        self._press_spin.setRange(0.001, 1000.0)
+        self._press_spin.setRange(0.001, 10000000.0)
         self._press_spin.setDecimals(4)
         self._press_spin.setValue(1.0)
-        self._press_spin.setSuffix(' atm')
-        self._press_spin.setSingleStep(0.1)
-        self._press_spin.setFixedWidth(130)
+        self._press_spin.setSingleStep(1.0)
+        self._press_spin.setFixedWidth(100)
         layout.addWidget(self._press_spin)
+
+        self._press_combo = QComboBox()
+        for k in PRESSURE_UNITS:
+            self._press_combo.addItem(PRESSURE_LABELS[k], k)
+        self._press_combo.setCurrentIndex(self._press_combo.findData('Pa'))
+        self._press_combo.setFixedWidth(75)
+        layout.addWidget(self._press_combo)
 
         layout.addSpacing(12)
 
@@ -170,6 +177,7 @@ class ConditionPanel(QGroupBox):
 
         self._temp_spin.valueChanged.connect(self._emit)
         self._press_spin.valueChanged.connect(self._emit)
+        self._press_combo.currentIndexChanged.connect(self._on_press_unit_changed)
         self._gas_combo.currentIndexChanged.connect(self._emit)
 
     @property
@@ -178,7 +186,7 @@ class ConditionPanel(QGroupBox):
 
     @property
     def pressure_atm(self) -> float:
-        return self._press_spin.value()
+        return _press_pa(self._press_spin, self._press_combo) / 101325.0
 
     @property
     def gas_key(self) -> str:
@@ -187,10 +195,14 @@ class ConditionPanel(QGroupBox):
     def block_signals(self, blocked: bool):
         self._temp_spin.blockSignals(blocked)
         self._press_spin.blockSignals(blocked)
+        self._press_combo.blockSignals(blocked)
         self._gas_combo.blockSignals(blocked)
 
     def _emit(self):
         self.changed.emit()
+
+    def _on_press_unit_changed(self):
+        self._emit()
 
 
 class FlowFromRatioPanel(QGroupBox):
@@ -233,9 +245,9 @@ class FlowFromRatioPanel(QGroupBox):
         self._init_unit_combos()
 
         self._temp_a_spin = self._make_t_spin()
-        self._press_a_spin = self._make_p_spin()
+        self._press_a_spin, self._press_a_combo = self._make_press_pair()
         self._temp_b_spin = self._make_t_spin()
-        self._press_b_spin = self._make_p_spin()
+        self._press_b_spin, self._press_b_combo = self._make_press_pair()
 
         self._mode_group = QButtonGroup(self)
         rb_molar = QRadioButton('\u6469\u5c14\u6bd4')
@@ -254,6 +266,7 @@ class FlowFromRatioPanel(QGroupBox):
         layout.addWidget(self._temp_a_spin, 0, 5)
         layout.addWidget(QLabel('\u538b\u529b:'), 0, 6)
         layout.addWidget(self._press_a_spin, 0, 7)
+        layout.addWidget(self._press_a_combo, 0, 8)
 
         mode_row = QHBoxLayout()
         mode_row.setSpacing(4)
@@ -262,7 +275,7 @@ class FlowFromRatioPanel(QGroupBox):
         mode_row.addWidget(rb_mass)
         mode_row.addWidget(rb_vol)
         mode_row.addStretch()
-        layout.addLayout(mode_row, 1, 0, 1, 8)
+        layout.addLayout(mode_row, 1, 0, 1, 9)
 
         ratio_layout = QHBoxLayout()
         ratio_layout.setSpacing(8)
@@ -273,7 +286,7 @@ class FlowFromRatioPanel(QGroupBox):
         ratio_layout.addSpacing(6)
         ratio_layout.addWidget(self._ratio_b_edit)
         ratio_layout.addStretch()
-        layout.addLayout(ratio_layout, 2, 0, 1, 8)
+        layout.addLayout(ratio_layout, 2, 0, 1, 9)
 
         layout.addWidget(QLabel('\u6c14\u4f53B:'), 3, 0)
         layout.addWidget(self._gas_b_combo, 3, 1)
@@ -283,11 +296,12 @@ class FlowFromRatioPanel(QGroupBox):
         layout.addWidget(self._temp_b_spin, 3, 5)
         layout.addWidget(QLabel('\u538b\u529b:'), 3, 6)
         layout.addWidget(self._press_b_spin, 3, 7)
+        layout.addWidget(self._press_b_combo, 3, 8)
 
         btn_layout = QHBoxLayout()
         btn_layout.addWidget(self._swap_btn)
         btn_layout.addStretch()
-        layout.addLayout(btn_layout, 4, 0, 1, 8)
+        layout.addLayout(btn_layout, 4, 0, 1, 9)
 
         self._gas_a_combo.currentIndexChanged.connect(self._on_any_change)
         self._gas_b_combo.currentIndexChanged.connect(self._on_any_change)
@@ -300,8 +314,10 @@ class FlowFromRatioPanel(QGroupBox):
         self._swap_btn.clicked.connect(self._swap)
         self._temp_a_spin.valueChanged.connect(self._on_any_change)
         self._press_a_spin.valueChanged.connect(self._on_any_change)
+        self._press_a_combo.currentIndexChanged.connect(self._on_any_change)
         self._temp_b_spin.valueChanged.connect(self._on_any_change)
         self._press_b_spin.valueChanged.connect(self._on_any_change)
+        self._press_b_combo.currentIndexChanged.connect(self._on_any_change)
         self._mode_group.idClicked.connect(lambda: self._on_any_change())
 
         self._updating = False
@@ -318,15 +334,19 @@ class FlowFromRatioPanel(QGroupBox):
         return s
 
     @staticmethod
-    def _make_p_spin() -> QDoubleSpinBox:
+    def _make_press_pair():
         s = QDoubleSpinBox()
-        s.setRange(0.001, 1000.0)
+        s.setRange(0.001, 10000000.0)
         s.setDecimals(4)
         s.setValue(1.0)
-        s.setSuffix(' atm')
-        s.setSingleStep(0.1)
-        s.setFixedWidth(100)
-        return s
+        s.setSingleStep(1.0)
+        s.setFixedWidth(90)
+        c = QComboBox()
+        for k in PRESSURE_UNITS:
+            c.addItem(PRESSURE_LABELS[k], k)
+        c.setCurrentIndex(c.findData('Pa'))
+        c.setFixedWidth(75)
+        return s, c
 
     def _init_unit_combos(self):
         for combo in [self._unit_a_combo, self._unit_b_combo]:
@@ -343,7 +363,7 @@ class FlowFromRatioPanel(QGroupBox):
             self._unit_a_combo.findData('mass:g/min')
         )
         self._unit_b_combo.setCurrentIndex(
-            self._unit_b_combo.findData('volumetric:slm')
+            self._unit_b_combo.findData('volumetric:L/min')
         )
 
     def get_gas_a_key(self) -> str:
@@ -426,9 +446,9 @@ class FlowFromRatioPanel(QGroupBox):
             return
         mode = self.get_ratio_mode()
         temp_a_K = self._temp_a_spin.value() + 273.15
-        press_a_Pa = self._press_a_spin.value() * 101325.0
+        press_a_Pa = _press_pa(self._press_a_spin, self._press_a_combo)
         temp_b_K = self._temp_b_spin.value() + 273.15
-        press_b_Pa = self._press_b_spin.value() * 101325.0
+        press_b_Pa = _press_pa(self._press_b_spin, self._press_b_combo)
         mm_a = _get_mm(self.get_gas_a_key())
         mm_b = _get_mm(self.get_gas_b_key())
         try:
@@ -472,8 +492,10 @@ class FlowFromRatioPanel(QGroupBox):
             vb = self._value_b_input._last_valid
             ta = self._temp_a_spin.value()
             pa = self._press_a_spin.value()
+            pau = self._press_a_combo.currentIndex()
             tb = self._temp_b_spin.value()
             pb = self._press_b_spin.value()
+            pbu = self._press_b_combo.currentIndex()
 
             self._gas_a_combo.setCurrentIndex(gb_idx)
             self._gas_b_combo.setCurrentIndex(ga_idx)
@@ -482,8 +504,10 @@ class FlowFromRatioPanel(QGroupBox):
 
             self._temp_a_spin.setValue(tb)
             self._press_a_spin.setValue(pb)
+            self._press_a_combo.setCurrentIndex(pbu)
             self._temp_b_spin.setValue(ta)
             self._press_b_spin.setValue(pa)
+            self._press_b_combo.setCurrentIndex(pau)
 
             self._value_a_input.clear_value()
             self._value_b_input.clear_value()
@@ -544,9 +568,9 @@ class RatioCalcPanel(QGroupBox):
         self._init_unit_combos()
 
         self._temp_a_spin = self._make_t_spin()
-        self._press_a_spin = self._make_p_spin()
+        self._press_a_spin, self._press_a_combo = self._make_press_pair()
         self._temp_b_spin = self._make_t_spin()
-        self._press_b_spin = self._make_p_spin()
+        self._press_b_spin, self._press_b_combo = self._make_press_pair()
 
         layout.addWidget(QLabel('\u6c14\u4f53A:'), 0, 0)
         layout.addWidget(self._gas_a_combo, 0, 1)
@@ -556,6 +580,7 @@ class RatioCalcPanel(QGroupBox):
         layout.addWidget(self._temp_a_spin, 0, 5)
         layout.addWidget(QLabel('\u538b\u529b:'), 0, 6)
         layout.addWidget(self._press_a_spin, 0, 7)
+        layout.addWidget(self._press_a_combo, 0, 8)
 
         layout.addWidget(QLabel('\u6c14\u4f53B:'), 1, 0)
         layout.addWidget(self._gas_b_combo, 1, 1)
@@ -565,6 +590,7 @@ class RatioCalcPanel(QGroupBox):
         layout.addWidget(self._temp_b_spin, 1, 5)
         layout.addWidget(QLabel('\u538b\u529b:'), 1, 6)
         layout.addWidget(self._press_b_spin, 1, 7)
+        layout.addWidget(self._press_b_combo, 1, 8)
 
         def _rr(label, result):
             row = QHBoxLayout()
@@ -578,14 +604,14 @@ class RatioCalcPanel(QGroupBox):
             row.addStretch()
             return row
 
-        layout.addLayout(_rr('\u6469\u5c14\u6bd4  A : B =', self._result_molar_b), 2, 0, 1, 8)
-        layout.addLayout(_rr('\u8d28\u91cf\u6bd4  A : B =', self._result_mass_b), 3, 0, 1, 8)
-        layout.addLayout(_rr('\u4f53\u79ef\u6bd4  A : B =', self._result_vol_b), 4, 0, 1, 8)
+        layout.addLayout(_rr('\u6469\u5c14\u6bd4  A : B =', self._result_molar_b), 2, 0, 1, 9)
+        layout.addLayout(_rr('\u8d28\u91cf\u6bd4  A : B =', self._result_mass_b), 3, 0, 1, 9)
+        layout.addLayout(_rr('\u4f53\u79ef\u6bd4  A : B =', self._result_vol_b), 4, 0, 1, 9)
 
         btn_layout = QHBoxLayout()
         btn_layout.addWidget(self._swap_btn)
         btn_layout.addStretch()
-        layout.addLayout(btn_layout, 5, 0, 1, 8)
+        layout.addLayout(btn_layout, 5, 0, 1, 9)
 
         self._gas_a_combo.currentIndexChanged.connect(self._on_any_change)
         self._gas_b_combo.currentIndexChanged.connect(self._on_any_change)
@@ -596,8 +622,10 @@ class RatioCalcPanel(QGroupBox):
         self._swap_btn.clicked.connect(self._swap)
         self._temp_a_spin.valueChanged.connect(self._on_any_change)
         self._press_a_spin.valueChanged.connect(self._on_any_change)
+        self._press_a_combo.currentIndexChanged.connect(self._on_any_change)
         self._temp_b_spin.valueChanged.connect(self._on_any_change)
         self._press_b_spin.valueChanged.connect(self._on_any_change)
+        self._press_b_combo.currentIndexChanged.connect(self._on_any_change)
 
         self._updating = False
 
@@ -613,15 +641,19 @@ class RatioCalcPanel(QGroupBox):
         return s
 
     @staticmethod
-    def _make_p_spin() -> QDoubleSpinBox:
+    def _make_press_pair():
         s = QDoubleSpinBox()
-        s.setRange(0.001, 1000.0)
+        s.setRange(0.001, 10000000.0)
         s.setDecimals(4)
         s.setValue(1.0)
-        s.setSuffix(' atm')
-        s.setSingleStep(0.1)
-        s.setFixedWidth(100)
-        return s
+        s.setSingleStep(1.0)
+        s.setFixedWidth(90)
+        c = QComboBox()
+        for k in PRESSURE_UNITS:
+            c.addItem(PRESSURE_LABELS[k], k)
+        c.setCurrentIndex(c.findData('Pa'))
+        c.setFixedWidth(75)
+        return s, c
 
     def _init_unit_combos(self):
         for combo in [self._unit_a_combo, self._unit_b_combo]:
@@ -635,7 +667,7 @@ class RatioCalcPanel(QGroupBox):
             self._unit_a_combo.findData('mass:g/min')
         )
         self._unit_b_combo.setCurrentIndex(
-            self._unit_b_combo.findData('volumetric:slm')
+            self._unit_b_combo.findData('volumetric:L/min')
         )
 
     def get_gas_a_key(self) -> str:
@@ -678,9 +710,9 @@ class RatioCalcPanel(QGroupBox):
         if va is None or vb is None or va == 0:
             return
         temp_a_K = self._temp_a_spin.value() + 273.15
-        press_a_Pa = self._press_a_spin.value() * 101325.0
+        press_a_Pa = _press_pa(self._press_a_spin, self._press_a_combo)
         temp_b_K = self._temp_b_spin.value() + 273.15
-        press_b_Pa = self._press_b_spin.value() * 101325.0
+        press_b_Pa = _press_pa(self._press_b_spin, self._press_b_combo)
         mm_a = _get_mm(self.get_gas_a_key())
         mm_b = _get_mm(self.get_gas_b_key())
         try:
@@ -713,8 +745,10 @@ class RatioCalcPanel(QGroupBox):
             vb = self._value_b_input._last_valid
             ta = self._temp_a_spin.value()
             pa = self._press_a_spin.value()
+            pau = self._press_a_combo.currentIndex()
             tb = self._temp_b_spin.value()
             pb = self._press_b_spin.value()
+            pbu = self._press_b_combo.currentIndex()
 
             self._gas_a_combo.setCurrentIndex(gb_idx)
             self._gas_b_combo.setCurrentIndex(ga_idx)
@@ -723,8 +757,10 @@ class RatioCalcPanel(QGroupBox):
 
             self._temp_a_spin.setValue(tb)
             self._press_a_spin.setValue(pb)
+            self._press_a_combo.setCurrentIndex(pbu)
             self._temp_b_spin.setValue(ta)
             self._press_b_spin.setValue(pa)
+            self._press_b_combo.setCurrentIndex(pau)
 
             self._value_a_input.clear_value()
             self._value_b_input.clear_value()
@@ -788,6 +824,10 @@ def _convert_with_ratio(
     else:
         mol_dst = target_dst
     return _from_molar(mol_dst, unit_dst, mm_dst, temp_dst_K, press_dst_Pa)
+
+
+def _press_pa(spin: QDoubleSpinBox, combo: QComboBox) -> float:
+    return spin.value() * PRESSURE_UNITS[combo.currentData()]
 
 
 def _get_mm(gas_key: str) -> float:

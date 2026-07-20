@@ -49,6 +49,32 @@ MOLAR_LABELS: Dict[str, str] = {
     'kmol/h': 'kmol/h',
 }
 
+PRESSURE_UNITS: Dict[str, float] = {
+    'Pa': 1.0,
+    'hPa': 100.0,
+    'kPa': 1000.0,
+    'MPa': 1000000.0,
+    'bar': 100000.0,
+    'mbar': 100.0,
+    'atm': 101325.0,
+    'Torr': 133.322,
+    'mTorr': 0.133322,
+    'psi': 6894.757,
+}
+
+PRESSURE_LABELS: Dict[str, str] = {
+    'Pa': 'Pa',
+    'hPa': 'hPa',
+    'kPa': 'kPa',
+    'MPa': 'MPa',
+    'bar': 'bar',
+    'mbar': 'mbar',
+    'atm': 'atm',
+    'Torr': 'Torr',
+    'mTorr': 'mTorr',
+    'psi': 'psi',
+}
+
 
 def get_unit_type(unit_key: str) -> str:
     if unit_key in VOLUMETRIC_UNITS:
