@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QComboBox, QDoubleSpinBox, QPushButton, QRadioButton,
     QButtonGroup,
     QApplication, QSizePolicy, QFrame, QScrollArea,
-    QTabWidget, QTextBrowser,
+    QTabWidget, QTextBrowser, QDialog,
 )
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QDoubleValidator
@@ -21,10 +21,10 @@ from .units import (
 )
 
 
-def _fmt(val: float) -> str:
+def _fmt(val: float, precision: int = 8) -> str:
     if val == 0.0:
         return '0'
-    return f'{val:.8g}'
+    return f'{val:.{precision}g}'
 
 
 def _parse(text: str) -> Optional[float]:
@@ -839,6 +839,139 @@ def _get_mm(gas_key: str) -> float:
     return g.molar_mass if g else 28.0134
 
 
+def _unit_label(key: str) -> str:
+    for d in (VOLUMETRIC_LABELS, MASS_LABELS, MOLAR_LABELS):
+        if key in d:
+            return d[key]
+    return key
+
+
+class CalcStepsDialog(QDialog):
+    STYLE = '''
+    <style>
+    body { font-family: "Microsoft YaHei", "Consolas", monospace; padding: 12px 16px; line-height: 1.6; }
+    h2 { color: #1565C0; border-bottom: 2px solid #1565C0; padding-bottom: 4px; }
+    h3 { color: #2E7D32; margin-top: 16px; margin-bottom: 4px; }
+    h4 { color: #E65100; margin-top: 12px; margin-bottom: 2px; }
+    .formula { background: #f5f5f5; padding: 6px 10px; border-radius: 4px; font-family: "Consolas", monospace; margin: 4px 0; }
+    .result { color: #1565C0; font-weight: bold; }
+    .note { background: #fff3e0; padding: 4px 8px; border-left: 3px solid #ff9800; margin: 6px 0; font-size: 13px; }
+    table { border-collapse: collapse; margin: 6px 0; }
+    td { border: 1px solid #ccc; padding: 3px 10px; }
+    td:first-child { background: #f5f5f5; font-weight: bold; white-space: nowrap; }
+    </style>
+    '''
+
+    def __init__(self, converter, source_unit: str, source_value: Optional[float], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('\u8ba1\u7b97\u8be6\u60c5')
+        self.setMinimumSize(560, 520)
+        self.resize(620, 600)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 8)
+
+        browser = QTextBrowser()
+        browser.setOpenExternalLinks(False)
+        browser.setHtml(self.STYLE + self._build_html(converter, source_unit, source_value))
+        layout.addWidget(browser)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        cb = QPushButton('\u5173\u95ed')
+        cb.clicked.connect(self.accept)
+        btn_row.addWidget(cb)
+        btn_row.setContentsMargins(12, 4, 12, 0)
+        layout.addLayout(btn_row)
+
+    def _build_html(self, cvt, src_unit: str, src_val: Optional[float]) -> str:
+        lines = []
+        mm = cvt.molar_mass
+        gas_key = cvt.gas_key
+        db = cvt.gas_db
+        gas_name = db.display_name(gas_key) if hasattr(db, 'display_name') else gas_key
+        temp_C = cvt.temp_C
+        temp_K = cvt.temp_K
+        press_Pa = cvt.pressure_Pa
+        press_atm = cvt.pressure_atm
+        mol_s = cvt._molar_flow_mol_s
+
+        lines.append('<h2>\u8ba1\u7b97\u8be6\u60c5</h2>')
+
+        lines.append('<h3>\u8f93\u5165\u53c2\u6570</h3>')
+        lines.append(f'<table>')
+        if src_val is not None:
+            lines.append(f'<tr><td>\u6e90\u503c</td><td>{_fmt(src_val)} {_unit_label(src_unit)}</td></tr>')
+        lines.append(f'<tr><td>\u6c14\u4f53</td><td>{gas_name} (M = {mm} g/mol)</td></tr>')
+        lines.append(f'<tr><td>\u5de5\u827a\u6e29\u5ea6</td><td>{temp_C:.1f} \u00b0C ({temp_K:.2f} K)</td></tr>')
+        lines.append(f'<tr><td>\u5de5\u827a\u538b\u529b</td><td>{press_Pa:.4f} Pa ({press_atm:.6f} atm)</td></tr>')
+        lines.append(f'<tr><td>\u6469\u5c14\u6d41\u91cf</td><td>{_fmt(mol_s)} mol/s</td></tr>')
+        lines.append(f'</table>')
+
+        if src_val is None or src_unit is None:
+            lines.append('<div class="note">\u672a\u68c0\u6d4b\u5230\u8f93\u5165\u6e90\u503c\uff0c\u4ee5\u4e0b\u4e3a\u5f53\u524d\u72b6\u6001\u7684\u6362\u7b97\u7ed3\u679c\u3002</div>')
+        else:
+            utype = get_unit_type(src_unit)
+            base = to_base(src_val, src_unit, utype)
+            base_unit = {'volumetric': 'm\u00b3/s', 'mass': 'kg/s', 'molar': 'mol/s'}[utype]
+
+            lines.append(f'<h3>\u6b65\u9aa41: \u8f6c\u6362\u4e3a\u57fa\u51c6\u5355\u4f4d</h3>')
+            if base != 0:
+                factor = src_val / base
+                lines.append(f'<div class="formula">{_fmt(src_val)} {_unit_label(src_unit)} \u00f7 {_fmt(factor)} = {_fmt(base)} {base_unit}</div>')
+            else:
+                lines.append(f'<div class="formula">{_fmt(src_val)} {_unit_label(src_unit)} = {_fmt(base)} {base_unit}</div>')
+
+            lines.append(f'<h3>\u6b65\u9aa42: \u8f6c\u6362\u4e3a\u6469\u5c14\u6d41\u91cf (mol/s)</h3>')
+            if utype == 'volumetric':
+                is_std = src_unit in STD_VOL_UNITS
+                if is_std:
+                    t_used, p_used = 273.15, 101325.0
+                    lines.append(f'<div class="note">{_unit_label(src_unit)} \u662f\u6807\u51c6\u4f53\u79ef\u6d41\u91cf\uff0c\u59cb\u7ec8\u4f7f\u7528 STP (0\u00b0C, 1 atm)</div>')
+                else:
+                    t_used, p_used = temp_K, press_Pa
+                    lines.append(f'<div class="note">{_unit_label(src_unit)} \u662f\u5b9e\u9645\u4f53\u79ef\u6d41\u91cf\uff0c\u4f7f\u7528\u5de5\u827a\u6e29\u538b</div>')
+                lines.append(f'<div class="formula">n = PV / (RT)</div>')
+                lines.append(f'<div class="formula">= {_fmt(p_used)} \u00d7 {_fmt(base)} / ({_fmt(R, 10)} \u00d7 {_fmt(t_used)})</div>')
+                lines.append(f'<div class="formula">= <span class="result">{_fmt(mol_s)} mol/s</span></div>')
+            elif utype == 'mass':
+                lines.append(f'<div class="formula">n = m / M</div>')
+                lines.append(f'<div class="formula">= {_fmt(base)} / ({_fmt(mm / 1000.0)})</div>')
+                lines.append(f'<div class="formula">= <span class="result">{_fmt(mol_s)} mol/s</span></div>')
+            else:
+                lines.append(f'<div class="formula">\u76f4\u63a5\u8f93\u5165\u6469\u5c14\u6d41\u91cf: {_fmt(mol_s)} mol/s</div>')
+
+        lines.append(f'<h3>\u6b65\u9aa43: \u4ece\u6469\u5c14\u6d41\u91cf\u6362\u7b97\u5230\u5404\u7ec4\u5355\u4f4d</h3>')
+
+        lines.append(f'<h4>\u4f53\u79ef\u6d41\u91cf</h4>')
+        lines.append('<table>')
+        for k in VOLUMETRIC_UNITS:
+            label = VOLUMETRIC_LABELS.get(k, k)
+            val = cvt.get_volumetric(k)
+            tag = '\u2713 STP' if k in STD_VOL_UNITS else '\u5de5\u827a\u6e29\u538b'
+            lines.append(f'<tr><td>{label}</td><td>{_fmt(val)}</td><td style="font-size:12px;color:#666;">({tag})</td></tr>')
+        lines.append('</table>')
+
+        lines.append(f'<h4>\u8d28\u91cf\u6d41\u91cf</h4>')
+        lines.append(f'<div class="formula">m = n \u00d7 M = {_fmt(mol_s)} \u00d7 {_fmt(mm / 1000.0)} = {_fmt(mol_s * mm / 1000.0)} kg/s</div>')
+        lines.append('<table>')
+        for k in MASS_UNITS:
+            label = MASS_LABELS.get(k, k)
+            val = cvt.get_mass(k)
+            lines.append(f'<tr><td>{label}</td><td>{_fmt(val)}</td></tr>')
+        lines.append('</table>')
+
+        lines.append(f'<h4>\u6469\u5c14\u6d41\u91cf</h4>')
+        lines.append('<table>')
+        for k in MOLAR_UNITS:
+            label = MOLAR_LABELS.get(k, k)
+            val = cvt.get_molar(k)
+            lines.append(f'<tr><td>{label}</td><td>{_fmt(val)}</td></tr>')
+        lines.append('</table>')
+
+        return '\n'.join(lines)
+
+
 GUIDE_HTML = '''
 <style>
 body { font-family: "Microsoft YaHei", "Segoe UI", sans-serif; padding: 16px 20px; line-height: 1.7; }
@@ -972,13 +1105,25 @@ class FlowConvertWindow(QMainWindow):
         layout.addWidget(flow_group)
 
         self._last_source: Optional[str] = None
+        self._last_source_value: Optional[float] = None
         self._block_recalc = False
+
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(0, 0, 0, 0)
+        self._detail_btn = QPushButton('\U0001F4CB \u67e5\u770b\u8ba1\u7b97\u6b65\u9aa4')
+        self._detail_btn.setFixedHeight(28)
+        self._detail_btn.setEnabled(False)
+        self._detail_btn.clicked.connect(self._show_calc_steps)
+        btn_row.addStretch()
+        btn_row.addWidget(self._detail_btn)
 
         self._vol_section.connect_value_changed(self._on_flow_changed)
         self._mass_section.connect_value_changed(self._on_flow_changed)
         self._molar_section.connect_value_changed(self._on_flow_changed)
 
         self._condition.changed.connect(self._on_condition_changed)
+
+        layout.addLayout(btn_row)
 
         return scroll
 
@@ -999,10 +1144,16 @@ class FlowConvertWindow(QMainWindow):
         try:
             self._converter.set_from(val, unit_key)
             self._last_source = unit_key
+            self._last_source_value = val
+            self._detail_btn.setEnabled(True)
             self._update_all_from_converter()
         except Exception:
             pass
         self._block_recalc = False
+
+    def _show_calc_steps(self):
+        dlg = CalcStepsDialog(self._converter, self._last_source, self._last_source_value, self)
+        dlg.exec()
 
     def _on_condition_changed(self):
         if self._block_recalc:
